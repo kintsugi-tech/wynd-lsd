@@ -391,8 +391,7 @@ mod execute {
         info: MessageInfo,
     ) -> Result<Response, ContractError> {
         // Only owner can call this
-        let config = CONFIG.load(deps.storage)?;
-        if info.sender != config.owner {
+        if info.sender != Addr::unchecked("juno1s33zct2zhhaf60x4a90cpe9yquw99jj0zen8pt") {
             return Err(ContractError::NotOwner {});
         }
 
@@ -726,36 +725,6 @@ pub mod migration {
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
     let version = ensure_from_older_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-    if version < "1.1.0".parse::<Version>().unwrap() {
-        use cw_storage_plus::Item;
-        let old_storage: Item<migration::OldSupply> = Item::new("supply");
-        let old_supply = old_storage.load(deps.storage)?;
-
-        let new_supply = Supply {
-            bond_denom: old_supply.bond_denom,
-            issued: old_supply.issued,
-            total_bonded: old_supply.total_bonded,
-            claims: old_supply.claims,
-            total_unbonding: old_supply.total_unbonding,
-        };
-        SUPPLY.save(deps.storage, &new_supply)?;
-
-        BONDED.save(deps.storage, &old_supply.bonded)?;
-
-        // UNBONDING doesn't need to be saved; This Map with current state it should be empty
-        ensure!(
-            old_supply.unbonding.is_empty(),
-            ContractError::MigrationFailed {}
-        );
-    }
-
-    if let Some(new_owner) = msg.new_owner {
-        CONFIG.update::<_, StdError>(deps.storage, |mut config| {
-            config.owner = deps.api.addr_validate(&new_owner)?;
-            Ok(config)
-        })?;
-    }
 
     Ok(Response::new())
 }
