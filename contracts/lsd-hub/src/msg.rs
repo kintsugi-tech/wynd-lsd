@@ -61,6 +61,8 @@ pub enum ExecuteMsg {
     },
     /// Updates the liquidity discount used for the [`QueryMsg::TargetValue`] query
     UpdateLiquidityDiscount { new_discount: Decimal },
+    /// Emergency function to unbond all staked tokens
+    EmergencyUnbondAll {},
 }
 
 #[cw_serde]

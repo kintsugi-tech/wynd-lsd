@@ -14,3 +14,5 @@
 node_ci_test/build
 node_ci_test/node_modules
 node_ci_test/package-lock.json
+
+.DS_Store

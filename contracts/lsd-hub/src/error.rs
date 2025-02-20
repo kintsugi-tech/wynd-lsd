@@ -48,6 +48,15 @@ pub enum ContractError {
 
     #[error("Migration failed - unbondings vector is not empty")]
     MigrationFailed {},
+
+    #[error("Bonding is currently disabled")]
+    BondingDisabled {},
+
+    #[error("You are not the owner")]
+    NotOwner {},
+
+    #[error("No delegations found")]
+    NoDelegationsFound {},
 }
 
 impl From<OverflowError> for ContractError {

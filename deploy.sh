@@ -1,0 +1,4 @@
+#/bin/sh
+junod tx wasm instantiate 2 '{"treasury": "juno1dcugtegqgswzjvdrl4cr88vv9v75wjrssucaf2", "commission": "0.09", "owner": "juno1dcugtegqgswzjvdrl4cr88vv9v75wjrssucaf2", "validators": [["junovaloper1q5860u6ducms20qu5emqwvju63ztrl5d8t055g", "0.3"],["junovaloper12szygttgeu2u0ffvfuz0ejmnx4lqwydnztwwvy", "0.3"], ["junovaloper1h3zfnp2lcdd6ddmpyft40zegsddqtvsqyz3249", "0.4"]], "cw20_init": {"cw20_code_id": 1, "decimals": 6, "label": "dimi lsd", "name": "wyJUNO", "symbol": "wyJUNO", "initial_balances": [] }, "epoch_period": 3600, "unbond_period": 3600, "max_concurrent_unbondings": 7, "liquidity_discount": "0.03"}' --from drip --label "culo" --admin juno1dcugtegqgswzjvdrl4cr88vv9v75wjrssucaf2 --gas 10000000
+
+junod tx wasm execute juno1wug8sewp6cedgkmrmvhl3lf3tulagm9hnvy8p0rppz9yjw0g4wtqwrw37d '{"bond": {}}' --from drip --amount 1000000000ujuno --gas 1000000

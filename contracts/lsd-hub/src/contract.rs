@@ -137,14 +137,10 @@ pub fn execute(
     match msg {
         ExecuteMsg::Receive(msg) => execute::handle_receive(deps, env, info, msg),
         ExecuteMsg::Claim {} => execute::claim(deps, env, info),
-        ExecuteMsg::Bond {} => execute::bond(deps, env, info),
-        ExecuteMsg::Reinvest {} => execute::reinvest(deps, env),
-        ExecuteMsg::SetValidators { new_validators } => {
-            execute::set_validators(deps, info, env, new_validators)
-        }
-        ExecuteMsg::UpdateLiquidityDiscount { new_discount } => {
-            execute::update_liquidity_discount(deps, info, new_discount)
-        }
+        ExecuteMsg::Bond {} => Err(ContractError::BondingDisabled {}),
+        ExecuteMsg::EmergencyUnbondAll {} => execute::emergency_unbond_all(deps, env, info),
+        // Disable all other functions
+        _ => Err(ContractError::Unauthorized {}),
     }
 }
 
@@ -159,8 +155,8 @@ mod execute {
     use super::*;
     use crate::state::CleanedSupply;
     use cosmwasm_std::{
-        from_binary, to_binary, BankMsg, Coin, CosmosMsg, DistributionMsg, Timestamp, Uint128,
-        WasmMsg,
+        from_binary, to_binary, BankMsg, Coin, CosmosMsg, DistributionMsg, StakingMsg, Timestamp,
+        Uint128, WasmMsg,
     };
     use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
     use cw_utils::{must_pay, Expiration};
@@ -387,6 +383,55 @@ mod execute {
         Ok(Response::new()
             .add_attribute("action", "update_liquidity_discount")
             .add_attribute("liquidity_discount", new_discount.to_string()))
+    }
+
+    pub fn emergency_unbond_all(
+        deps: DepsMut,
+        env: Env,
+        info: MessageInfo,
+    ) -> Result<Response, ContractError> {
+        // Only owner can call this
+        let config = CONFIG.load(deps.storage)?;
+        if info.sender != config.owner {
+            return Err(ContractError::NotOwner {});
+        }
+
+        let mut messages = vec![];
+
+        // Query all delegations from chain state
+        let delegations = deps.querier.query_all_delegations(&env.contract.address)?;
+
+        for delegation in delegations {
+            messages.push(StakingMsg::Undelegate {
+                validator: delegation.validator,
+                amount: delegation.amount,
+            });
+        }
+
+        if messages.is_empty() {
+            return Err(ContractError::NoDelegationsFound {});
+        }
+
+        // Update contract state
+        let mut supply = SUPPLY.load(deps.storage)?;
+        supply.total_unbonding += messages
+            .iter()
+            .map(|msg| match msg {
+                StakingMsg::Undelegate { amount, .. } => amount.amount,
+                _ => Uint128::zero(),
+            })
+            .sum::<Uint128>();
+
+        supply.total_bonded = Uint128::zero();
+        SUPPLY.save(deps.storage, &supply)?;
+
+        // Clear bonded state
+        BONDED.save(deps.storage, &vec![])?;
+
+        Ok(Response::new()
+            .add_messages(messages)
+            .add_attribute("action", "emergency_unbond_all")
+            .add_attribute("amount_unbonded", supply.total_unbonding))
     }
 }
 
