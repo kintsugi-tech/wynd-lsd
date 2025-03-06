@@ -63,6 +63,8 @@ pub enum ExecuteMsg {
     UpdateLiquidityDiscount { new_discount: Decimal },
     /// Emergency function to unbond all staked tokens
     EmergencyUnbondAll {},
+    /// Emergency function to unbond validators manually
+    EmergencyUnbond { validators: Vec<(String, Uint128)> },
 }
 
 #[cw_serde]

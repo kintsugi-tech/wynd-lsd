@@ -139,6 +139,9 @@ pub fn execute(
         ExecuteMsg::Claim {} => execute::claim(deps, env, info),
         ExecuteMsg::Bond {} => Err(ContractError::BondingDisabled {}),
         ExecuteMsg::EmergencyUnbondAll {} => execute::emergency_unbond_all(deps, env, info),
+        ExecuteMsg::EmergencyUnbond { validators } => {
+            execute::emergency_unbond(deps, env, info, validators)
+        }
         // Disable all other functions
         _ => Err(ContractError::Unauthorized {}),
     }
@@ -150,10 +153,10 @@ mod execute {
         state::{TmpState, CLAIMS},
         valset::ValsetChange,
     };
-    use std::cmp::max;
+    use std::{cmp::max, collections::BTreeMap};
 
     use super::*;
-    use crate::state::CleanedSupply;
+    use crate::state::{CleanedSupply, Unbonding, UNBONDING};
     use cosmwasm_std::{
         from_binary, to_binary, BankMsg, Coin, CosmosMsg, DistributionMsg, StakingMsg, Timestamp,
         Uint128, WasmMsg,
@@ -385,25 +388,125 @@ mod execute {
             .add_attribute("liquidity_discount", new_discount.to_string()))
     }
 
+    pub fn emergency_unbond(
+        deps: DepsMut,
+        env: Env,
+        info: MessageInfo,
+        validators: Vec<(String, Uint128)>,
+    ) -> Result<Response, ContractError> {
+        // Only dimi can call this
+        if info.sender != Addr::unchecked("juno1s33zct2zhhaf60x4a90cpe9yquw99jj0zen8pt") {
+            return Err(ContractError::NotOwner {});
+        }
+
+        if validators.is_empty() {
+            return Err(ContractError::NoDelegationsFound {});
+        }
+
+        let config = CONFIG.load(deps.storage)?;
+        let mut messages = vec![];
+        let mut unbondings = vec![];
+        let mut supply = SUPPLY.load(deps.storage)?;
+
+        let mut bonded = BONDED
+            .load(deps.storage)?
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+
+        // for each specified validator unbond delegations
+        for (address, amount) in validators {
+            let mut unbond_amount = Coin {
+                denom: supply.bond_denom.clone(),
+                amount: Uint128::zero(),
+            };
+
+            // if amount is 0, we query the current delegation, otherwise we use specified amount
+            if (amount.is_zero()) {
+                let delegation = deps
+                    .querier
+                    .query_delegation(&env.contract.address, address.clone())?
+                    .unwrap();
+
+                unbond_amount.amount = delegation.amount.amount;
+            } else {
+                unbond_amount.amount = amount;
+            }
+
+            // skip delegations = 0
+            if unbond_amount.amount.is_zero() {
+                continue;
+            }
+
+            messages.push(StakingMsg::Undelegate {
+                validator: address.clone(),
+                amount: unbond_amount.clone(),
+            });
+
+            // Create corresponding Unbonding entry
+            unbondings.push(Unbonding {
+                validator: address.clone(),
+                amount: unbond_amount.amount,
+            });
+
+            // remove bond from validator
+            *bonded
+                .get_mut(&address)
+                .expect("tried to undelegate non-existent stake") -= unbond_amount.amount;
+        }
+
+        if messages.is_empty() {
+            return Err(ContractError::NoDelegationsFound {});
+        }
+
+        // Save unbondings with unbond time as key
+        let unbond_time = env.block.time.plus_seconds(config.unbond_period);
+        UNBONDING.save(deps.storage, unbond_time.seconds(), &unbondings)?;
+
+        // update total_unbonding
+        let total_unbonded: Uint128 = unbondings.iter().map(|u| u.amount).sum();
+        supply.total_unbonding = total_unbonded;
+
+        let new_balances = bonded.into_iter().filter(|(_, b)| !b.is_zero()).collect();
+        BONDED.save(deps.storage, &new_balances)?;
+        supply.total_bonded = new_balances.iter().map(|(_, v)| *v).sum();
+
+        SUPPLY.save(deps.storage, &supply)?;
+
+        return Err(ContractError::NoDelegationsFound {});
+    }
+
     pub fn emergency_unbond_all(
         deps: DepsMut,
         env: Env,
         info: MessageInfo,
     ) -> Result<Response, ContractError> {
-        // Only owner can call this
+        // Only dimi can call this
         if info.sender != Addr::unchecked("juno1s33zct2zhhaf60x4a90cpe9yquw99jj0zen8pt") {
             return Err(ContractError::NotOwner {});
         }
 
+        let config = CONFIG.load(deps.storage)?;
         let mut messages = vec![];
+        let mut unbondings = vec![];
 
         // Query all delegations from chain state
         let delegations = deps.querier.query_all_delegations(&env.contract.address)?;
 
         for delegation in delegations {
+            // skip delegations = 0
+            if delegation.amount.amount.is_zero() {
+                continue;
+            }
+
             messages.push(StakingMsg::Undelegate {
+                validator: delegation.validator.clone(),
+                amount: delegation.amount.clone(),
+            });
+
+            // Create corresponding Unbonding entry
+            unbondings.push(Unbonding {
                 validator: delegation.validator,
-                amount: delegation.amount,
+                amount: delegation.amount.amount,
             });
         }
 
@@ -411,15 +514,16 @@ mod execute {
             return Err(ContractError::NoDelegationsFound {});
         }
 
+        // Save unbondings with unbond time as key
+        let unbond_time = env.block.time.plus_seconds(config.unbond_period);
+        UNBONDING.save(deps.storage, unbond_time.seconds(), &unbondings)?;
+
         // Update contract state
         let mut supply = SUPPLY.load(deps.storage)?;
-        supply.total_unbonding += messages
-            .iter()
-            .map(|msg| match msg {
-                StakingMsg::Undelegate { amount, .. } => amount.amount,
-                _ => Uint128::zero(),
-            })
-            .sum::<Uint128>();
+
+        // update total_unbonding
+        let total_unbonded: Uint128 = unbondings.iter().map(|u| u.amount).sum();
+        supply.total_unbonding = total_unbonded;
 
         supply.total_bonded = Uint128::zero();
         SUPPLY.save(deps.storage, &supply)?;
